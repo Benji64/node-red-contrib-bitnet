@@ -1,0 +1,431 @@
+<script type="text/javascript">
+  RED.nodes.registerType("bitnet", {
+    category: "AI",
+    color: "#9fd3c7",
+    defaults: {
+      name:          { value: "" },
+      // Mode API
+      mode:          { value: "completion" },
+      // Installation BitNet
+      bitnetDir:     { value: "" },
+      bitnetBinary:  { value: "" },
+      modelPath:     { value: "", required: true },
+      alias:         { value: "" },
+      // Server
+      serverPort:    { value: 8080,      validate: RED.validators.number() },
+      host:          { value: "127.0.0.1" },
+      nSlots:        { value: 1,         validate: RED.validators.number() },
+      contBatching:  { value: true },
+      flashAttn:     { value: false },
+      mlock:         { value: false },
+      noMmap:        { value: false },
+      noWarmup:      { value: false },
+      // Context
+      contextSize:   { value: 2048,  validate: RED.validators.number() },
+      batchSize:     { value: 512,   validate: RED.validators.number() },
+      ubatchSize:    { value: 512,   validate: RED.validators.number() },
+      ctxShift:      { value: "" },
+      // Threads
+      threads:       { value: -1,    validate: RED.validators.number() },
+      threadsBatch:  { value: -1,    validate: RED.validators.number() },
+      // Sampling
+      temperature:   { value: 0.8 },
+      maxTokens:     { value: 512,   validate: RED.validators.number() },
+      topK:          { value: 40,    validate: RED.validators.number() },
+      topP:          { value: 0.95 },
+      minP:          { value: 0.05 },
+      repeatPenalty: { value: 1.1 },
+      repeatLastN:   { value: 64,    validate: RED.validators.number() },
+      seed:          { value: -1,    validate: RED.validators.number() },
+      mirostat:      { value: 0,     validate: RED.validators.number() },
+      mirostatTau:   { value: 5.0 },
+      mirostatEta:   { value: 0.1 },
+      // Chat / Prompt
+      promptFormat:  { value: "template" },
+      chatTemplate:  { value: "" },
+      systemPrompt:  { value: "" },
+      // Embedding
+      pooling:       { value: "" },
+      // Debug
+      debugTrace:    { value: false }
+    },
+    inputs: 1,
+    outputs: 2,
+    outputLabels: ["réponse", "timing / debug"],
+    icon: "font-awesome/fa-bolt",
+    label: function () {
+      const base = this.name || "BitNet";
+      return this.mode === "embedding" ? base + " [embedding]" : base;
+    },
+    paletteLabel: "BitNet",
+    oneditprepare: function () {
+      function updateMode() {
+        const mode = $("#node-input-mode").val();
+        const emb  = mode === "embedding";
+        // Sampling et Chat/Prompt n'ont pas de sens pour un modèle d'embedding.
+        $("#fields-generation-only").toggle(!emb);
+        $("#fields-embedding-only").toggle(emb);
+        $("#fields-completion-only").toggle(mode === "completion");
+      }
+      $("#node-input-mode").on("change", updateMode);
+      updateMode();
+    }
+  });
+</script>
+
+<script type="text/html" data-template-name="bitnet">
+
+  <!-- ── Identification ─────────────────────────────────── -->
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Nom</label>
+    <input type="text" id="node-input-name" placeholder="BitNet">
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-mode"><i class="fa fa-exchange"></i> Mode API</label>
+    <select id="node-input-mode" style="width:65%">
+      <option value="completion">completion — /completion (prompt texte simple)</option>
+      <option value="openai">openai — proxy pur /v1/chat/completions</option>
+      <option value="chat">chat — /v1/chat/completions + historique multi-tour</option>
+      <option value="embedding">embedding — /v1/embeddings (modèles BitNet-embedding)</option>
+    </select>
+  </div>
+
+  <!-- ── Installation BitNet ───────────────────────────── -->
+  <div class="form-tips" style="margin-bottom:8px;margin-top:12px"><b>BitNet</b></div>
+
+  <div class="form-row">
+    <label for="node-input-bitnetDir"><i class="fa fa-folder-open"></i> Dossier BitNet</label>
+    <input type="text" id="node-input-bitnetDir" placeholder="/home/pi/BitNet" style="width:65%">
+  </div>
+  <div style="color:#888;font-size:.82em;margin:-6px 0 10px 110px">
+    Racine du dépôt <code>microsoft/BitNet</code> compilé avec <code>setup_env.py</code>.
+    Le serveur est lancé depuis <code>build/bin/llama-server</code>.
+  </div>
+  <div class="form-row">
+    <label for="node-input-modelPath"><i class="fa fa-file"></i> Chemin modèle</label>
+    <input type="text" id="node-input-modelPath" placeholder="models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf" style="width:65%">
+  </div>
+  <div style="color:#888;font-size:.82em;margin:-6px 0 10px 110px">
+    Absolu, ou relatif au dossier BitNet.
+  </div>
+  <div class="form-row">
+    <label for="node-input-bitnetBinary"><i class="fa fa-terminal"></i> Binaire</label>
+    <input type="text" id="node-input-bitnetBinary" placeholder="build/bin/llama-server" style="width:50%">
+    <span style="color:#888;font-size:.85em;margin-left:6px">optionnel — remplace le binaire déduit du dossier</span>
+  </div>
+  <div class="form-row">
+    <label for="node-input-alias"><i class="fa fa-bookmark"></i> Alias</label>
+    <input type="text" id="node-input-alias" placeholder="bitnet-2b" style="width:50%">
+    <span style="color:#888;font-size:.85em;margin-left:6px">optionnel</span>
+  </div>
+
+  <!-- ── Server ────────────────────────────────────────── -->
+  <div class="form-tips" style="margin-bottom:8px;margin-top:12px"><b>Serveur</b></div>
+
+  <div class="form-row">
+    <label for="node-input-serverPort"><i class="fa fa-plug"></i> Port</label>
+    <input type="number" id="node-input-serverPort" style="width:100px">
+  </div>
+  <div class="form-row">
+    <label for="node-input-host"><i class="fa fa-globe"></i> Host</label>
+    <input type="text" id="node-input-host" style="width:150px">
+  </div>
+  <div class="form-row">
+    <label for="node-input-nSlots"><i class="fa fa-clone"></i> Slots parallèles</label>
+    <input type="number" id="node-input-nSlots" style="width:80px" min="1">
+    <span style="color:#888;font-size:.85em;margin-left:6px">-np : requêtes simultanées</span>
+  </div>
+  <div class="form-row">
+    <label style="width:auto;margin-right:12px">
+      <input type="checkbox" id="node-input-contBatching" style="width:auto;margin-right:6px">
+      Continuous batching <span style="color:#888;font-size:.85em">(-cb, défaut: activé)</span>
+    </label>
+  </div>
+  <div class="form-row">
+    <label style="width:auto;margin-right:12px">
+      <input type="checkbox" id="node-input-flashAttn" style="width:auto;margin-right:6px">
+      Flash Attention <span style="color:#888;font-size:.85em">(-fa)</span>
+    </label>
+  </div>
+  <div class="form-row">
+    <label style="width:auto;margin-right:12px">
+      <input type="checkbox" id="node-input-mlock" style="width:auto;margin-right:6px">
+      mlock <span style="color:#888;font-size:.85em">(verrouiller le modèle en RAM)</span>
+    </label>
+    &nbsp;&nbsp;
+    <label style="width:auto;margin-right:12px">
+      <input type="checkbox" id="node-input-noMmap" style="width:auto;margin-right:6px">
+      Désactiver mmap
+    </label>
+    &nbsp;&nbsp;
+    <label style="width:auto">
+      <input type="checkbox" id="node-input-noWarmup" style="width:auto;margin-right:6px">
+      Pas de warmup
+    </label>
+  </div>
+
+  <!-- ── Context ───────────────────────────────────────── -->
+  <div class="form-tips" style="margin-bottom:8px;margin-top:12px"><b>Contexte</b></div>
+
+  <div class="form-row">
+    <label for="node-input-contextSize"><i class="fa fa-align-left"></i> Context (-c)</label>
+    <input type="number" id="node-input-contextSize" style="width:100px">
+    <span style="color:#888;font-size:.85em;margin-left:6px">tokens — 0 = valeur du modèle</span>
+  </div>
+  <div class="form-row">
+    <label for="node-input-batchSize"><i class="fa fa-list"></i> Batch size (-b)</label>
+    <input type="number" id="node-input-batchSize" style="width:100px">
+  </div>
+  <div class="form-row">
+    <label for="node-input-ubatchSize"><i class="fa fa-list-ul"></i> μBatch size (-ub)</label>
+    <input type="number" id="node-input-ubatchSize" style="width:100px">
+  </div>
+  <div class="form-row">
+    <label for="node-input-ctxShift"><i class="fa fa-arrows-h"></i> Context shift</label>
+    <select id="node-input-ctxShift" style="width:200px">
+      <option value="">-- défaut du build --</option>
+      <option value="on">activé</option>
+      <option value="off">désactivé</option>
+    </select>
+    <span style="color:#888;font-size:.85em;margin-left:6px">comportement en fin de contexte</span>
+  </div>
+
+  <!-- ── Threads ───────────────────────────────────────── -->
+  <div class="form-tips" style="margin-bottom:8px;margin-top:12px"><b>CPU / Threads</b></div>
+
+  <div class="form-row">
+    <label for="node-input-threads"><i class="fa fa-cogs"></i> Threads inférence</label>
+    <input type="number" id="node-input-threads" style="width:80px" min="-1">
+    <span style="color:#888;font-size:.85em;margin-left:6px">-1 = auto</span>
+  </div>
+  <div class="form-row">
+    <label for="node-input-threadsBatch"><i class="fa fa-cog"></i> Threads batch</label>
+    <input type="number" id="node-input-threadsBatch" style="width:80px" min="-1">
+    <span style="color:#888;font-size:.85em;margin-left:6px">-1 = même que threads</span>
+  </div>
+  <div style="color:#888;font-size:.82em;margin:-6px 0 10px 110px">
+    BitNet tourne sur CPU uniquement : le serveur est lancé avec <code>-ngl 0</code>.
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!-- Sampling + Chat/Prompt (masqués en mode embedding)   -->
+  <!-- ═══════════════════════════════════════════════════ -->
+  <div id="fields-generation-only">
+
+    <!-- ── Sampling ──────────────────────────────────────── -->
+    <div class="form-tips" style="margin-bottom:8px;margin-top:12px"><b>Sampling (défauts)</b></div>
+
+    <div class="form-row">
+      <label for="node-input-maxTokens"><i class="fa fa-list-ol"></i> Max tokens</label>
+      <input type="number" id="node-input-maxTokens" style="width:100px">
+    </div>
+    <div class="form-row">
+      <label for="node-input-temperature"><i class="fa fa-thermometer-half"></i> Temperature</label>
+      <input type="number" id="node-input-temperature" style="width:80px" step="0.05" min="0" max="2">
+      <span style="color:#888;font-size:.85em;margin-left:6px">0 = déterministe</span>
+    </div>
+    <div class="form-row">
+      <label for="node-input-topK"><i class="fa fa-sort-amount-asc"></i> Top-K</label>
+      <input type="number" id="node-input-topK" style="width:80px" min="0">
+      <span style="color:#888;font-size:.85em;margin-left:6px">0 = désactivé</span>
+    </div>
+    <div class="form-row">
+      <label for="node-input-topP"><i class="fa fa-percent"></i> Top-P</label>
+      <input type="number" id="node-input-topP" style="width:80px" step="0.01" min="0" max="1">
+      <span style="color:#888;font-size:.85em;margin-left:6px">1.0 = désactivé</span>
+    </div>
+    <div class="form-row">
+      <label for="node-input-minP"><i class="fa fa-minus-circle"></i> Min-P</label>
+      <input type="number" id="node-input-minP" style="width:80px" step="0.01" min="0" max="1">
+      <span style="color:#888;font-size:.85em;margin-left:6px">0.0 = désactivé</span>
+    </div>
+    <div class="form-row">
+      <label for="node-input-repeatPenalty"><i class="fa fa-redo"></i> Repeat penalty</label>
+      <input type="number" id="node-input-repeatPenalty" style="width:80px" step="0.05" min="1">
+    </div>
+    <div class="form-row">
+      <label for="node-input-repeatLastN"><i class="fa fa-history"></i> Repeat last N</label>
+      <input type="number" id="node-input-repeatLastN" style="width:80px" min="0">
+      <span style="color:#888;font-size:.85em;margin-left:6px">0 = désactivé</span>
+    </div>
+    <div class="form-row">
+      <label for="node-input-seed"><i class="fa fa-random"></i> Seed</label>
+      <input type="number" id="node-input-seed" style="width:120px">
+      <span style="color:#888;font-size:.85em;margin-left:6px">-1 = aléatoire</span>
+    </div>
+
+    <div class="form-row">
+      <label for="node-input-mirostat"><i class="fa fa-sliders"></i> Mirostat</label>
+      <select id="node-input-mirostat" style="width:100px">
+        <option value="0">Désactivé</option>
+        <option value="1">v1</option>
+        <option value="2">v2</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label for="node-input-mirostatTau">Mirostat τ</label>
+      <input type="number" id="node-input-mirostatTau" style="width:80px" step="0.1">
+      <span style="color:#888;font-size:.85em;margin-left:6px">entropie cible</span>
+    </div>
+    <div class="form-row">
+      <label for="node-input-mirostatEta">Mirostat η</label>
+      <input type="number" id="node-input-mirostatEta" style="width:80px" step="0.01">
+      <span style="color:#888;font-size:.85em;margin-left:6px">learning rate</span>
+    </div>
+
+    <!-- ── Chat template ─────────────────────────────────── -->
+    <div class="form-tips" style="margin-bottom:8px;margin-top:12px"><b>Chat / Prompt</b></div>
+
+    <div id="fields-completion-only">
+      <div class="form-row">
+        <label for="node-input-promptFormat"><i class="fa fa-align-justify"></i> Format du prompt</label>
+        <select id="node-input-promptFormat" style="width:65%">
+          <option value="template">template — chat template du modèle (via /apply-template)</option>
+          <option value="raw">raw — texte envoyé tel quel (modèles de base)</option>
+          <option value="plain">plain — ### Human: / ### Assistant:</option>
+        </select>
+      </div>
+      <div style="color:#888;font-size:.82em;margin:-6px 0 10px 110px">
+        Mode <b>completion</b> uniquement. <b>raw</b> convient aux modèles non instruct
+        (ex. <code>bitnet_b1_58-large</code>) ; le System prompt y est ignoré.
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label for="node-input-chatTemplate"><i class="fa fa-code"></i> Chat template</label>
+      <input type="text" id="node-input-chatTemplate" list="bitnet-chat-templates"
+             placeholder="-- depuis le modèle --" style="width:65%">
+      <datalist id="bitnet-chat-templates">
+        <option value="chatml"></option>
+        <option value="llama3"></option>
+        <option value="llama2"></option>
+        <option value="phi3"></option>
+        <option value="phi4"></option>
+        <option value="gemma"></option>
+        <option value="mistral-v7"></option>
+        <option value="deepseek3"></option>
+        <option value="vicuna"></option>
+        <option value="zephyr"></option>
+      </datalist>
+    </div>
+    <div style="color:#888;font-size:.82em;margin:-6px 0 10px 110px">
+      Laisser vide pour utiliser le template intégré au GGUF (recommandé).
+    </div>
+    <div class="form-row">
+      <label for="node-input-systemPrompt"
+             style="vertical-align:top;margin-top:4px">
+        <i class="fa fa-comment"></i> System prompt
+      </label>
+      <textarea id="node-input-systemPrompt" rows="4"
+                placeholder="You are a helpful assistant..."
+                style="width:65%;font-size:.9em;"></textarea>
+    </div>
+
+  </div> <!-- /fields-generation-only -->
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!-- Embedding uniquement                                 -->
+  <!-- ═══════════════════════════════════════════════════ -->
+  <div id="fields-embedding-only">
+    <div class="form-tips" style="margin-bottom:8px;margin-top:12px"><b>Embedding</b></div>
+    <div class="form-row">
+      <label for="node-input-pooling"><i class="fa fa-compress"></i> Pooling</label>
+      <select id="node-input-pooling" style="width:200px">
+        <option value="">-- défaut du modèle --</option>
+        <option value="last">last</option>
+        <option value="mean">mean</option>
+        <option value="cls">cls</option>
+      </select>
+    </div>
+    <div style="color:#888;font-size:.82em;margin:-6px 0 10px 110px">
+      Les modèles BitNet-embedding utilisent le pooling sur le dernier token ;
+      laissez « défaut du modèle » sauf besoin particulier. Les pooling <code>none</code>
+      et <code>rank</code> sont refusés par l'endpoint <code>/v1/embeddings</code> et donc non proposés.
+      Une entrée plus longue que <b>μBatch size</b> peut être refusée : augmentez-le si besoin.
+    </div>
+  </div>
+
+  <!-- ── Debug (toujours visible) ──────────────────────── -->
+  <div class="form-tips" style="margin-bottom:8px;margin-top:12px"><b>Debug</b></div>
+
+  <div class="form-row">
+    <label style="width:auto">
+      <input type="checkbox" id="node-input-debugTrace" style="width:auto;margin-right:6px">
+      Activer les traces (llama-server) dans le debug
+    </label>
+  </div>
+  <div style="color:#888;font-size:.82em;margin-left:8px;margin-top:-4px;margin-bottom:8px">
+    Affiche les lignes <code>[bitnet:port]</code> dans le panneau Debug.<br>
+    Activable/désactivable à chaud : <code>msg.topic = "trace"</code>, <code>msg.payload = true/false</code>
+  </div>
+
+</script>
+
+<script type="text/html" data-help-name="bitnet">
+  <p>Lance <b>llama-server</b> de <a href="https://github.com/microsoft/BitNet" target="_blank">bitnet.cpp</a>
+     (inférence 1-bit / BitNet b1.58) comme processus enfant et expose l'inférence LLM dans un flow Node-RED.
+     Quatre modes API, deux sorties. CPU uniquement.</p>
+
+  <h3>Modes API</h3>
+  <dl class="message-properties">
+    <dt>completion</dt>
+    <dd><code>/completion</code> — texte en entrée, texte en sortie. Le format du prompt se règle dans
+        <i>Chat / Prompt</i> : <code>template</code> (chat template du modèle, via <code>/apply-template</code>),
+        <code>raw</code> (tel quel, modèles de base) ou <code>plain</code> (<code>### Human / ### Assistant</code>).
+        Un payload <code>{ prompt: "…" }</code> est transmis sans aucune mise en forme.</dd>
+    <dt>openai</dt>
+    <dd>Proxy pur vers <code>/v1/chat/completions</code>. Les champs du payload l'emportent sur les défauts de sampling du nœud.</dd>
+    <dt>chat</dt>
+    <dd>Comme <b>openai</b>, pensé pour les conversations multi-tours : <code>msg.messages</code> contient l'historique
+        mis à jour — repassez-le en <code>msg.payload</code> au tour suivant.</dd>
+    <dt>embedding</dt>
+    <dd><code>/v1/embeddings</code> — pour les modèles BitNet-embedding (0.6B / 270M). Le serveur est lancé avec <code>--embedding</code>.</dd>
+  </dl>
+
+  <h3>Entrée</h3>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">string | object | array</span></dt>
+    <dd>Prompt, objet requête complet ou tableau <code>messages[]</code> selon le mode.
+        En mode embedding : texte, tableau de textes, ou objet <code>{ input, … }</code>.</dd>
+  </dl>
+
+  <h4>Messages de contrôle</h4>
+  <dl class="message-properties">
+    <dt>topic = "debug"</dt>
+    <dd>Émet la configuration complète (commande de lancement, arguments, capacités du build) sur la sortie 2.</dd>
+    <dt>topic = "trace", payload = true/false</dt>
+    <dd>Active/désactive à chaud l'affichage des logs du serveur dans le panneau Debug.</dd>
+  </dl>
+
+  <h3>Sortie</h3>
+  <h4>Sortie 1 — réponse</h4>
+  <dl class="message-properties">
+    <dt>payload <span class="property-type">string | array</span></dt>
+    <dd>Texte généré — ou, en mode embedding, le vecteur (un vecteur par entrée si l'entrée est un tableau).</dd>
+    <dt>bitnet <span class="property-type">object</span></dt>
+    <dd>Réponse API complète du serveur.</dd>
+    <dt>messages <span class="property-type">array</span></dt>
+    <dd>Modes openai/chat : historique complet pour le tour suivant.</dd>
+  </dl>
+
+  <h4>Sortie 2 — debug / timing</h4>
+  <dl class="message-properties">
+    <dt>topic = "timing"</dt>
+    <dd>Statistiques après chaque requête (<code>promptEvalMs</code>, <code>evalTokensPerSec</code>, …),
+        lues dans le champ <code>timings</code> de la réponse du serveur.</dd>
+    <dt>topic = "debug"</dt>
+    <dd>Config complète au démarrage ou sur demande.</dd>
+  </dl>
+
+  <h3>Notes</h3>
+  <ul>
+    <li>Le nœud démarre son propre serveur au déploiement ; un port distinct par instance.</li>
+    <li>Les messages reçus pendant le chargement du modèle sont mis en file d'attente.</li>
+    <li>Les flags de <code>llama-server</code> varient selon la version du fork embarqué par BitNet :
+        le nœud lit <code>--help</code> au démarrage et n'envoie que les options supportées
+        (visibles dans <code>capabilities</code> du message debug).</li>
+    <li>Arrêt propre (SIGTERM puis SIGKILL) au redéploiement.</li>
+    <li>Le chemin GPU de BitNet (<code>gpu/</code>) est un projet séparé : non piloté par ce nœud.</li>
+  </ul>
+</script>

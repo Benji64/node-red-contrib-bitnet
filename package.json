@@ -1,0 +1,48 @@
+{
+  "name": "node-red-contrib-bitnet",
+  "version": "1.0.0",
+  "description": "Node-RED node for on-device 1-bit LLM inference via bitnet.cpp (llama-server from microsoft/BitNet)",
+  "keywords": [
+    "node-red",
+    "bitnet",
+    "bitnet.cpp",
+    "1-bit",
+    "1.58-bit",
+    "llm",
+    "ai",
+    "inference",
+    "local-llm",
+    "gguf",
+    "openai-compatible",
+    "embeddings",
+    "edge-ai",
+    "embedded",
+    "cpu"
+  ],
+  "author": "Benji64",
+  "license": "MIT",
+  "node-red": {
+    "version": ">=3.0.0",
+    "nodes": {
+      "bitnet": "bitnet.js"
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bitnet.js",
+    "bitnet.html",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Benji64/node-red-contrib-bitnet.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Benji64/node-red-contrib-bitnet/issues"
+  },
+  "homepage": "https://github.com/Benji64/node-red-contrib-bitnet#readme",
+  "dependencies": {}
+}
